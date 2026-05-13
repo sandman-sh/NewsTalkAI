@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NewsTalk AI — Voice-Powered News Intelligence</title>
+  <meta name="description" content="NewsTalk AI is a voice-controlled news portal powered by AI. Read, listen, and converse with the news in any language." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Onboarding / Settings Modal -->
+  <div id="onboarding-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Personalize Your News</h2>
+        <p class="modal-subtitle">Set your preferences to get started</p>
+      </div>
+      <div class="modal-body">
+        <div class="setting-group">
+          <label class="setting-label">Country</label>
+          <select id="setting-country" class="setting-select">
+            <option value="us">🇺🇸 United States</option>
+            <option value="gb">🇬🇧 United Kingdom</option>
+            <option value="in">🇮🇳 India</option>
+            <option value="ca">🇨🇦 Canada</option>
+            <option value="au">🇦🇺 Australia</option>
+            <option value="de">🇩🇪 Germany</option>
+            <option value="fr">🇫🇷 France</option>
+            <option value="jp">🇯🇵 Japan</option>
+            <option value="br">🇧🇷 Brazil</option>
+            <option value="za">🇿🇦 South Africa</option>
+            <option value="ae">🇦🇪 UAE</option>
+            <option value="sg">🇸🇬 Singapore</option>
+          </select>
+        </div>
+        <div class="setting-group">
+          <label class="setting-label">Language</label>
+          <select id="setting-language" class="setting-select">
+            <option value="en">English</option>
+            <option value="hi">हिन्दी (Hindi)</option>
+            <option value="es">Español (Spanish)</option>
+            <option value="fr">Français (French)</option>
+            <option value="de">Deutsch (German)</option>
+            <option value="ja">日本語 (Japanese)</option>
+            <option value="pt">Português (Portuguese)</option>
+            <option value="ar">العربية (Arabic)</option>
+            <option value="zh">中文 (Chinese)</option>
+            <option value="ko">한국어 (Korean)</option>
+          </select>
+        </div>
+        <div class="setting-group">
+          <label class="setting-label">Categories</label>
+          <div class="category-grid" id="category-grid">
+            <button class="cat-chip active" data-cat="general">General</button>
+            <button class="cat-chip" data-cat="business">Business</button>
+            <button class="cat-chip" data-cat="technology">Technology</button>
+            <button class="cat-chip" data-cat="science">Science</button>
+            <button class="cat-chip" data-cat="health">Health</button>
+            <button class="cat-chip" data-cat="sports">Sports</button>
+            <button class="cat-chip" data-cat="entertainment">Entertainment</button>
+            <button class="cat-chip" data-cat="politics">Politics</button>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button id="save-settings-btn" class="btn-primary">Start Reading</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app">
+    <!-- Top Nav -->
+    <header id="top-nav">
+      <div class="nav-left">
+        <div class="logo-mark">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 12 L11 15 L16 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h1 class="logo-text">NewsTalk <span class="logo-ai">AI</span></h1>
+      </div>
+      <nav class="nav-categories" id="nav-categories">
+        <!-- Dynamic categories -->
+      </nav>
+      <div class="nav-right">
+        <button id="theme-toggle-btn" class="icon-btn" title="Toggle Theme">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+        <button id="settings-btn" class="icon-btn" title="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+        </button>
+        <button id="voice-toggle-btn" class="icon-btn mic-btn" title="Toggle Voice Control">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content: Split View -->
+    <main id="main-content">
+      <!-- Left Panel: AI Voice Assistant -->
+      <section id="ai-panel">
+        <div class="ai-panel-inner">
+          <!-- Voice Orb -->
+          <div id="voice-orb-container">
+            <div class="orb-ring ring-1"></div>
+            <div class="orb-ring ring-2"></div>
+            <div class="orb-ring ring-3"></div>
+            <div id="voice-orb" class="voice-orb">
+              <div class="orb-core"></div>
+            </div>
+            <div id="orb-status" class="orb-status">Ready</div>
+          </div>
+
+          <!-- Chat / Conversation -->
+          <div id="chat-container">
+            <div id="chat-messages" class="chat-messages">
+              <div class="chat-msg ai">
+                <div class="msg-bubble">Welcome to NewsTalk AI. I'll read the latest headlines for you. You can interrupt me anytime to ask questions, switch topics, or change the news category. Just tap the microphone or say "Hey News".</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Voice Controls -->
+          <div id="voice-controls">
+            <button id="mic-btn" class="mic-button" title="Press to speak">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M5 10a7 7 0 0014 0"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+            </button>
+            <button id="stop-btn" class="stop-button" title="Stop AI">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: News Reader -->
+      <section id="news-panel">
+        <div class="news-panel-inner">
+          <!-- Currently Reading -->
+          <div id="current-article" class="current-article">
+            <div class="article-meta">
+              <span class="article-source" id="article-source"></span>
+              <span class="article-time" id="article-time"></span>
+            </div>
+            <h2 class="article-title" id="article-title">Tap the microphone to begin</h2>
+            <p class="article-desc" id="article-desc">NewsTalk AI will read the latest headlines and you can have a conversation about any story. Use voice commands to navigate.</p>
+            <div class="article-image-wrap" id="article-image-wrap" style="display:none;">
+              <img id="article-image" class="article-image" alt="" />
+            </div>
+            <div class="article-body" id="article-body"></div>
+          </div>
+
+          <!-- News Queue -->
+          <div id="news-queue-section">
+            <h3 class="section-title">Up Next</h3>
+            <div id="news-queue" class="news-queue">
+              <!-- Filled dynamically -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Breaking News Ticker -->
+    <footer id="ticker-bar">
+      <div class="ticker-label">BREAKING</div>
+      <div class="ticker-track">
+        <div class="ticker-content" id="ticker-content">
+          Loading latest headlines...
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
