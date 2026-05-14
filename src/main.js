@@ -193,9 +193,7 @@ async function startApp() {
   voiceRecognition = new VoiceRecognition(state.settings.language);
   
   // Setup voice recognition callbacks
-  voiceRecognition.onResult = handleVoiceInput;
-  voiceRecognition.onStart = () => setOrbState('listening');
-  voiceRecognition.onEnd = () => resumeListeningIfContinuous();
+  setupVoiceCallbacks(voiceRecognition);
   
   // Build nav categories
   buildNavCategories();
@@ -477,6 +475,22 @@ async function readCurrentArticle() {
 }
 
 /* ── Voice Recognition ─────────────────────────── */
+function setupVoiceCallbacks(vr) {
+  vr.onResult = handleVoiceInput;
+  vr.onStart = () => {
+    state.isListening = true;
+    if (state.isSpeaking) setOrbState('speaking');
+    else setOrbState('listening');
+  };
+  vr.onEnd = () => {
+    // CRITICAL: sync state so resumeListeningIfContinuous can restart
+    state.isListening = false;
+    resumeListeningIfContinuous();
+  };
+}
+
+let keepAliveTimer = null;
+
 function toggleListening() {
   if (state.continuousVoice) {
     stopEverything();
@@ -487,6 +501,9 @@ function toggleListening() {
     dom.micBtn.classList.add('active');
     dom.voiceToggle.classList.add('active');
     setOrbState('listening');
+    
+    // Start keep-alive: browser kills recognition often, this ensures it restarts
+    startKeepAlive();
     
     if (!state.isReading && !state.isSpeaking) {
        const msg = "Starting NewsTalk. I will begin reading the news.";
@@ -500,15 +517,35 @@ function toggleListening() {
   }
 }
 
+function startKeepAlive() {
+  stopKeepAlive();
+  // Every 1 second, check if recognition died and restart it
+  keepAliveTimer = setInterval(() => {
+    if (!state.continuousVoice) {
+      stopKeepAlive();
+      return;
+    }
+    if (!state.isListening && !state.isThinking) {
+      console.log('KeepAlive: restarting recognition');
+      try { voiceRecognition.start(); } catch(e) {}
+    }
+  }, 1000);
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+}
+
 function resumeListeningIfContinuous() {
   if (state.continuousVoice && !state.isListening && !state.isThinking) {
     setTimeout(() => {
       if (state.continuousVoice && !state.isListening && !state.isThinking) {
-        try { voiceRecognition.start(); state.isListening = true; } catch(e){}
-        if (state.isSpeaking) setOrbState('speaking');
-        else setOrbState('listening');
+        try { voiceRecognition.start(); } catch(e){}
       }
-    }, 200);
+    }, 150);
   } else if (!state.continuousVoice && !state.isListening && !state.isSpeaking && !state.isThinking) {
     setOrbState('ready');
   }
@@ -623,9 +660,7 @@ async function handleVoiceInput(transcript) {
         ttsService = new ElevenLabsService(state.settings.elevenLabsKey, state.settings.language);
         aiService = new AIService(state.settings.tokenRouterKey, state.settings.language);
         voiceRecognition = new VoiceRecognition(state.settings.language);
-        voiceRecognition.onResult = handleVoiceInput;
-        voiceRecognition.onStart = () => setOrbState('listening');
-        voiceRecognition.onEnd = () => resumeListeningIfContinuous();
+        setupVoiceCallbacks(voiceRecognition);
         await loadNews(state.activeCategory);
         state.isThinking = false;
         const msg = code === 'en' ? 'Switched to English.' : 'Language changed.';
@@ -719,6 +754,7 @@ async function handleAIConversation(userMessage) {
 /* ── Stop Everything ───────────────────────────── */
 function stopEverything() {
   state.continuousVoice = false;
+  stopKeepAlive();
   stopSpeaking();
   if (voiceRecognition) voiceRecognition.stop();
   state.isListening = false;
