@@ -244,7 +244,7 @@ async function switchCategory(cat, isAuto = false) {
   });
   
   if (!isAuto) {
-    stopEverything();
+    stopSpeaking();
   }
   
   await loadNews(cat);
@@ -383,7 +383,7 @@ function updateTicker() {
 let currentSessionId = 0;
 let newsSessionId = 0;
 
-async function speakText(text, isNews = false) {
+async function speakText(text) {
   if (!state.settings.elevenLabsKey) {
     console.warn('No ElevenLabs key');
     return false;
@@ -396,48 +396,35 @@ async function speakText(text, isNews = false) {
   resumeListeningIfContinuous();
   
   try {
-    await ttsService.speak(text, state.settings.voiceId, isNews);
+    // ttsService.speak() now auto-stops any previous audio before starting
+    const completed = await ttsService.speak(text, state.settings.voiceId);
+    
+    // If we were interrupted (sessionId changed), return false
+    if (currentSessionId !== sessionId) return false;
+    
+    state.isSpeaking = false;
+    resumeListeningIfContinuous();
+    return completed;
   } catch (err) {
     console.error('TTS error:', err);
-    addMessage('ai', '⚠️ Voice synthesis unavailable. Reading in text mode.');
+    if (currentSessionId !== sessionId) return false;
+    state.isSpeaking = false;
+    resumeListeningIfContinuous();
+    return false;
   }
-  
-  if (currentSessionId !== sessionId) return false; // Interrupted
-  
-  state.isSpeaking = false;
-  resumeListeningIfContinuous();
-  return true;
 }
 
-async function resumeNewsAudio() {
-  const sessionId = ++currentSessionId;
-  state.isSpeaking = true;
-  setOrbState('speaking');
-  resumeListeningIfContinuous();
-  
-  await ttsService.resumeNews();
-  
-  if (currentSessionId !== sessionId) return false;
-  
-  state.isSpeaking = false;
-  resumeListeningIfContinuous();
-  return true;
-}
-
-function stopSpeaking(pauseNewsInsteadOfStop = false) {
+function stopSpeaking() {
   currentSessionId++;
+  newsSessionId++;
   if (ttsService) {
-    if (pauseNewsInsteadOfStop) {
-      ttsService.pauseNews();
-      if (ttsService.chatAudio) { ttsService.chatAudio.pause(); ttsService.chatAudio = null; }
-    } else {
-      ttsService.stop();
-    }
+    ttsService.stop();
   }
   state.isSpeaking = false;
+  state.isReading = false;
 }
 
-async function readCurrentArticle(resume = false) {
+async function readCurrentArticle() {
   const currentNewsSession = ++newsSessionId;
   
   const article = state.news[state.currentIndex];
@@ -446,15 +433,9 @@ async function readCurrentArticle(resume = false) {
   state.isReading = true;
   dom.articleTitle.classList.add('reading');
   
-  let completed = false;
-  if (resume && ttsService && ttsService.newsAudio) {
-    addMessage('ai', `▶️ Resuming: "${article.title}"`);
-    completed = await resumeNewsAudio();
-  } else {
-    const readText = `${article.title}. ${article.description || ''} ${article.content ? article.content.substring(0, 500) : ''}`;
-    addMessage('ai', `📰 Reading: "${article.title}"`);
-    completed = await speakText(readText, true);
-  }
+  const readText = `${article.title}. ${article.description || ''} ${article.content ? article.content.substring(0, 500) : ''}`;
+  addMessage('ai', `📰 Reading: "${article.title}"`);
+  const completed = await speakText(readText);
   
   if (currentNewsSession !== newsSessionId) return;
   
@@ -487,7 +468,7 @@ async function readCurrentArticle(resume = false) {
     if (currentNewsSession !== newsSessionId) return;
     state.isThinking = false;
     addMessage('ai', nextPrompt);
-    const msgCompleted = await speakText(nextPrompt, false);
+    const msgCompleted = await speakText(nextPrompt);
     
     if (msgCompleted && state.continuousVoice && currentNewsSession === newsSessionId) {
       await switchCategory(nextCat, true);
@@ -527,7 +508,7 @@ function resumeListeningIfContinuous() {
         if (state.isSpeaking) setOrbState('speaking');
         else setOrbState('listening');
       }
-    }, 500);
+    }, 200);
   } else if (!state.continuousVoice && !state.isListening && !state.isSpeaking && !state.isThinking) {
     setOrbState('ready');
   }
@@ -536,21 +517,35 @@ function resumeListeningIfContinuous() {
 async function handleVoiceInput(transcript) {
   if (!transcript.trim()) return;
   
-  newsSessionId++;
+  const lower = transcript.toLowerCase().trim();
   
+  // When AI is speaking, ignore very short/noisy transcripts (echo from speaker)
+  // Only respond to clear, intentional commands (3+ words or known short commands)
   if (state.isSpeaking || state.isReading) {
-    stopSpeaking(true); // Pause the news instead of destroying it
+    const wordCount = lower.split(/\s+/).length;
+    const isKnownShortCommand = matchCommand(lower, [
+      'next', 'skip', 'stop', 'pause', 'back', 'previous', 'quiet',
+      'change news', 'change the news', 'next news', 'next story',
+      'no', 'yes', 'ok', 'start', 'read', 'resume', 'continue', 'refresh',
+      'अगला', 'रुको', 'पिछला', 'हाँ', 'पढ़ो',
+      'siguiente', 'parar', 'suivant', 'arrêter', 'nächste', 'stopp',
+    ]);
+    
+    // Skip noisy/echo input — must be a known command or 3+ clear words
+    if (wordCount < 3 && !isKnownShortCommand) {
+      console.log(`Voice: Ignoring noise while speaking: "${transcript}"`);
+      return;
+    }
   }
   
-  state.isListening = false;
+  // ALWAYS fully stop all audio before processing any voice command
+  stopSpeaking();
+  
   state.isThinking = true;
-  dom.micBtn.classList.remove('active');
-  dom.voiceToggle.classList.remove('active');
   
   addMessage('user', transcript);
   
   // Check for voice commands
-  const lower = transcript.toLowerCase();
   
   // Navigation commands
   if (matchCommand(lower, ['next', 'next news', 'next story', 'change the news', 'change news', 'skip', 'अगला', 'siguiente', 'suivant', 'nächste'])) {
@@ -591,11 +586,7 @@ async function handleVoiceInput(transcript) {
   
   if (matchCommand(lower, ['read', 'start reading', 'read news', 'start', 'yes', 'continue', 'yep', 'sure', 'ok', 'पढ़ो', 'leer', 'lire', 'lesen', 'हाँ', 'sí', 'oui', 'ja', 'resume'])) {
     state.isThinking = false;
-    if (ttsService && ttsService.newsAudio) {
-      await readCurrentArticle(true);
-    } else {
-      await readCurrentArticle();
-    }
+    await readCurrentArticle();
     return;
   }
   
@@ -715,7 +706,7 @@ async function handleAIConversation(userMessage) {
     state.isThinking = false;
     addMessage('ai', response);
     
-    await speakText(response, false);
+    await speakText(response);
   } catch (err) {
     state.isThinking = false;
     console.error('AI error:', err);

@@ -23,29 +23,74 @@ export class ElevenLabsService {
   constructor(apiKey, language = 'en') {
     this.apiKey = apiKey;
     this.language = language;
-    this.newsAudio = null;
-    this.chatAudio = null;
+    this.currentAudio = null;       // Single audio reference — only ONE audio plays at a time
+    this.currentAudioUrl = null;    // For revoking object URLs
+    this.abortController = null;    // Abort pending fetch requests
     this.isPlaying = false;
+    this._speakGeneration = 0;      // Monotonic counter to detect stale completions
   }
 
   getVoiceId(language) {
     return VOICE_MAP[language] || VOICE_MAP.en;
   }
 
-  async speak(text, voiceId = null, isNews = false) {
+  /**
+   * Immediately kills ALL audio — stops playback, aborts pending fetches,
+   * revokes object URLs, resets state. Safe to call multiple times.
+   */
+  stopAll() {
+    // Increment generation so any in-flight speak() calls bail out
+    this._speakGeneration++;
+
+    // Abort any pending API request
+    if (this.abortController) {
+      try { this.abortController.abort(); } catch (_) {}
+      this.abortController = null;
+    }
+
+    // Kill current audio
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause();
+        this.currentAudio.onended = null;
+        this.currentAudio.onerror = null;
+        this.currentAudio.src = '';
+      } catch (_) {}
+      this.currentAudio = null;
+    }
+
+    // Revoke object URL
+    if (this.currentAudioUrl) {
+      try { URL.revokeObjectURL(this.currentAudioUrl); } catch (_) {}
+      this.currentAudioUrl = null;
+    }
+
+    // Kill browser speechSynthesis fallback
+    if (window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+    }
+
+    this.isPlaying = false;
+  }
+
+  /**
+   * Speak text. Automatically stops any previously playing audio first.
+   * Returns a promise that resolves when speech finishes, or rejects if interrupted.
+   */
+  async speak(text, voiceId = null) {
+    // ALWAYS stop everything before starting new speech
+    this.stopAll();
+
     if (!this.apiKey) {
       console.warn('ElevenLabs: No API key provided');
-      return this.fallbackSpeak(text, isNews);
+      return this.fallbackSpeak(text);
     }
 
     const vid = voiceId || this.getVoiceId(this.language);
-    
-    // Stop previous audio of the same type
-    if (isNews) {
-      if (this.newsAudio) { this.newsAudio.pause(); this.newsAudio = null; }
-    } else {
-      if (this.chatAudio) { this.chatAudio.pause(); this.chatAudio = null; }
-    }
+    const generation = this._speakGeneration;
+
+    // Create a new abort controller for this request
+    this.abortController = new AbortController();
 
     try {
       const response = await fetch(
@@ -66,101 +111,95 @@ export class ElevenLabsService {
               use_speaker_boost: true,
             },
           }),
+          signal: this.abortController.signal,
         }
       );
 
+      // Check if we were interrupted while waiting for the API
+      if (generation !== this._speakGeneration) return false;
+
       if (!response.ok) {
-        return this.fallbackSpeak(text, isNews);
+        return this.fallbackSpeak(text);
       }
 
       const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
 
-      return new Promise((resolve, reject) => {
+      // Check again after blob download
+      if (generation !== this._speakGeneration) return false;
+
+      const audioUrl = URL.createObjectURL(audioBlob);
+      this.currentAudioUrl = audioUrl;
+
+      return new Promise((resolve) => {
+        // Final check before creating audio
+        if (generation !== this._speakGeneration) {
+          URL.revokeObjectURL(audioUrl);
+          this.currentAudioUrl = null;
+          resolve(false);
+          return;
+        }
+
         const audio = new Audio(audioUrl);
-        if (isNews) this.newsAudio = audio;
-        else this.chatAudio = audio;
-        
+        this.currentAudio = audio;
         this.isPlaying = true;
 
         audio.onended = () => {
-          if (isNews && this.newsAudio === audio) this.newsAudio = null;
-          if (!isNews && this.chatAudio === audio) this.chatAudio = null;
-          this.isPlaying = (this.newsAudio !== null || this.chatAudio !== null);
+          if (this.currentAudio === audio) {
+            this.currentAudio = null;
+            this.currentAudioUrl = null;
+            this.isPlaying = false;
+          }
           URL.revokeObjectURL(audioUrl);
-          resolve();
+          resolve(true); // Completed naturally
         };
 
-        audio.onerror = (err) => {
-          if (isNews && this.newsAudio === audio) this.newsAudio = null;
-          if (!isNews && this.chatAudio === audio) this.chatAudio = null;
-          this.isPlaying = (this.newsAudio !== null || this.chatAudio !== null);
+        audio.onerror = () => {
+          if (this.currentAudio === audio) {
+            this.currentAudio = null;
+            this.currentAudioUrl = null;
+            this.isPlaying = false;
+          }
           URL.revokeObjectURL(audioUrl);
-          reject(err);
+          resolve(false);
         };
 
-        audio.play().catch(err => {
+        audio.play().catch(() => {
           this.isPlaying = false;
-          this.fallbackSpeak(text, isNews).then(resolve).catch(reject);
+          this.currentAudio = null;
+          this.currentAudioUrl = null;
+          URL.revokeObjectURL(audioUrl);
+          this.fallbackSpeak(text).then(() => resolve(true)).catch(() => resolve(false));
         });
       });
     } catch (err) {
-      return this.fallbackSpeak(text, isNews);
+      // AbortError means we intentionally cancelled — not an error
+      if (err.name === 'AbortError') return false;
+      return this.fallbackSpeak(text);
     }
   }
 
-  pauseNews() {
-    if (this.newsAudio) {
-      this.newsAudio.pause();
-      this.isPlaying = (this.chatAudio !== null);
-      return true;
-    }
-    if (window.speechSynthesis) window.speechSynthesis.pause();
-    return false;
-  }
-
-  resumeNews() {
-    if (this.newsAudio) {
-      this.isPlaying = true;
-      return new Promise((resolve) => {
-         const oldEnded = this.newsAudio.onended;
-         this.newsAudio.onended = () => {
-            if (oldEnded) oldEnded();
-            resolve();
-         };
-         this.newsAudio.play().catch(() => resolve());
-      });
-    }
-    if (window.speechSynthesis) {
-      window.speechSynthesis.resume();
-      this.isPlaying = true;
-      return Promise.resolve(); // Simple fallback
-    }
-    return Promise.resolve();
-  }
-
+  /**
+   * Alias for stopAll — used by main.js
+   */
   stop() {
-    if (this.newsAudio) { this.newsAudio.pause(); this.newsAudio = null; }
-    if (this.chatAudio) { this.chatAudio.pause(); this.chatAudio = null; }
-    this.isPlaying = false;
-    
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
+    this.stopAll();
   }
 
-  fallbackSpeak(text, isNews) {
+  fallbackSpeak(text) {
     return new Promise((resolve) => {
       if (!window.speechSynthesis) {
-        resolve();
+        resolve(true);
         return;
       }
+
+      // Cancel any previous fallback speech
+      window.speechSynthesis.cancel();
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = this.getLocale(this.language);
       utterance.rate = 0.95;
-      utterance.onend = () => { this.isPlaying = false; resolve(); };
-      utterance.onerror = () => { this.isPlaying = false; resolve(); };
+      utterance.onend = () => { this.isPlaying = false; resolve(true); };
+      utterance.onerror = () => { this.isPlaying = false; resolve(false); };
 
       this.isPlaying = true;
       window.speechSynthesis.speak(utterance);

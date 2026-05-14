@@ -50,25 +50,33 @@ export class VoiceRecognition {
     };
 
     this.recognition.onresult = (event) => {
-      const resultIndex = event.resultIndex;
-      const transcript = event.results[resultIndex][0].transcript;
-      const confidence = event.results[resultIndex][0].confidence;
-      
-      console.log(`Voice: "${transcript}" (confidence: ${(confidence * 100).toFixed(1)}%)`);
-      
-      if (this.onResult) {
-        this.onResult(transcript, confidence);
+      // Only process final results (not interim)
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const transcript = event.results[i][0].transcript;
+          const confidence = event.results[i][0].confidence;
+          
+          console.log(`Voice: "${transcript}" (confidence: ${(confidence * 100).toFixed(1)}%)`);
+          
+          if (this.onResult) {
+            this.onResult(transcript, confidence);
+          }
+        }
       }
     };
 
     this.recognition.onerror = (event) => {
       console.warn('Voice recognition error:', event.error);
-      this.isListening = false;
       
       if (event.error === 'not-allowed') {
+        this.isListening = false;
         alert('Microphone access denied. Please allow microphone access in your browser settings.');
+        if (this.onError) this.onError(event.error);
+        return;
       }
       
+      // For recoverable errors (no-speech, audio-capture, network), 
+      // let onend handle the restart
       if (this.onError) this.onError(event.error);
     };
 
